@@ -1,5 +1,4 @@
 import express from "express";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
@@ -26,18 +25,16 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// ===== API XEM KHÁCH =====
+// ===== API =====
 app.get("/users", (req, res) => {
   res.json(USERS);
 });
 
-// ===== TẮT BOT =====
 app.get("/off/:id", (req, res) => {
   ACTIVE_USERS[req.params.id] = false;
   res.send("Bot OFF: " + req.params.id);
 });
 
-// ===== BẬT BOT =====
 app.get("/on/:id", (req, res) => {
   ACTIVE_USERS[req.params.id] = true;
   res.send("Bot ON: " + req.params.id);
@@ -52,7 +49,6 @@ app.post("/webhook", async (req, res) => {
   if (body.object === "page") {
     for (const entry of body.entry) {
 
-      // hỗ trợ cả FB + IG
       const events = entry.messaging || entry.changes || [];
 
       for (const event of events) {
@@ -76,7 +72,7 @@ app.post("/webhook", async (req, res) => {
             time: new Date()
           };
 
-          // check bot bật/tắt
+          // nếu bot tắt thì bỏ qua
           if (ACTIVE_USERS[senderId] === false) {
             continue;
           }
@@ -127,7 +123,6 @@ Phí ship:
 Nhân viên sẽ hỗ trợ bạn tiếp nha 👨‍💼`;
   }
 
-  // AI fallback
   return await getAIResponse(text);
 }
 
@@ -165,7 +160,7 @@ async function getAIResponse(userText) {
   }
 }
 
-// ===== SEND MESSAGE =====
+// ===== SEND =====
 async function sendMessage(senderId, text) {
   try {
     await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
@@ -181,7 +176,7 @@ async function sendMessage(senderId, text) {
   }
 }
 
-// ===== START SERVER =====
+// ===== RUN =====
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log("🚀 Server running on port", PORT);
