@@ -8,6 +8,9 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const VERIFY_TOKEN = "123456";
 
+// ===== LƯU TRẠNG THÁI BOT =====
+const ACTIVE_USERS = {}; // true = bot trả lời, false = bot tắt
+
 // ===== VERIFY =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -32,11 +35,30 @@ app.post("/webhook", async (req, res) => {
         const senderId = webhookEvent.sender.id;
 
         if (webhookEvent.message) {
-          const text = (webhookEvent.message.text || "").toLowerCase();
+          let text = (webhookEvent.message.text || "").toLowerCase();
 
           console.log("User:", text);
 
-          const reply = await handleMessage(text);
+          // ===== BẬT / TẮT BOT =====
+
+          if (text === "#off") {
+            ACTIVE_USERS[senderId] = false;
+            await sendMessage(senderId, "Dạ đã chuyển sang nhân viên hỗ trợ bạn nha 👨‍💼");
+            return;
+          }
+
+          if (text === "#on") {
+            ACTIVE_USERS[senderId] = true;
+            await sendMessage(senderId, "Bot đã hoạt động lại 🤖");
+            return;
+          }
+
+          // nếu bot đang tắt → không trả lời
+          if (ACTIVE_USERS[senderId] === false) {
+            return;
+          }
+
+          const reply = await handleMessage(senderId, text);
 
           await sendMessage(senderId, reply);
         }
@@ -51,9 +73,9 @@ app.post("/webhook", async (req, res) => {
 
 
 // ===== LOGIC CHÍNH =====
-async function handleMessage(text) {
+async function handleMessage(senderId, text) {
 
-  // 1. hỏi còn áo
+  // 1. hỏi còn hàng
   if (text.includes("còn") || text.includes("hết")) {
     return "Dạ áo này bên mình vẫn còn nha 😄\nBạn cao bao nhiêu, nặng bao nhiêu để mình tư vấn size chuẩn cho bạn luôn ạ?";
   }
@@ -68,8 +90,11 @@ async function handleMessage(text) {
     return "Dạ bên mình đang tư vấn theo form và nhu cầu nên mình báo chi tiết cho bạn nha 😄\nBạn cao bao nhiêu, nặng bao nhiêu để mình tư vấn chuẩn cho bạn luôn ạ?";
   }
 
-  // 4. chốt đơn
-  if (text.includes("lấy") || text.includes("mua") || text.includes("chốt")) {
+  // 4. chốt đơn → TẮT BOT
+  if (text.includes("mua") || text.includes("chốt") || text.includes("lấy")) {
+
+    ACTIVE_USERS[senderId] = false; // 🔥 tắt bot luôn
+
     return `Dạ mình lên đơn cho bạn nha 😄  
 Bạn gửi giúp mình:
 
@@ -81,10 +106,10 @@ Phí ship:
 - Nội thành: 20k  
 - Tỉnh: 30k (cọc trước)
 
-Shop giao hàng cho bạn nha 🚚`;
+Nhân viên sẽ hỗ trợ bạn tiếp nha 👨‍💼`;
   }
 
-  // ===== fallback AI =====
+  // ===== AI fallback =====
   return await getAIResponse(text);
 }
 
@@ -109,7 +134,7 @@ Bạn là nhân viên bán quần áo.
 Quy tắc:
 - KHÔNG báo giá
 - Trả lời tự nhiên như người thật
-- Luôn dẫn khách về tư vấn size
+- Luôn dẫn khách về hỏi chiều cao cân nặng
 - Mục tiêu là giữ khách
 
 Phong cách:
