@@ -1,175 +1,120 @@
 import express from "express";
+import axios from "axios";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// ===== ENV =====
+// ===== CONFIG =====
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const VERIFY_TOKEN = "123456";
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "verify_token";
 
-// ===== DATA =====
-const ACTIVE_USERS = {};
-const USERS = {}; // lưu danh sách khách
-
-// ===== VERIFY =====
+// ===== WEBHOOK VERIFY =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
+  if (mode && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verified");
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
   }
-  return res.sendStatus(403);
 });
 
-// ===== API: XEM DANH SÁCH KHÁCH =====
-app.get("/users", (req, res) => {
-  res.json(USERS);
-});
-
-// ===== API: TẮT BOT =====
-app.get("/off/:id", (req, res) => {
-  const userId = req.params.id;
-
-  ACTIVE_USERS[userId] = false;
-
-  res.send("Đã tắt bot cho: " + userId);
-});
-
-// ===== API: BẬT BOT =====
-app.get("/on/:id", (req, res) => {
-  const userId = req.params.id;
-
-  ACTIVE_USERS[userId] = true;
-
-  res.send("Đã bật bot cho: " + userId);
-});
-
-// ===== WEBHOOK =====
+// ===== MAIN WEBHOOK =====
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
+  console.log("🔥 EVENT:", JSON.stringify(body, null, 2));
+
   if (body.object === "page") {
     for (const entry of body.entry) {
-      for (const webhookEvent of entry.messaging) {
+      const events = entry.messaging || entry.changes || [];
 
-        const senderId = webhookEvent.sender.id;
+      for (const event of events) {
+        const senderId = event.sender?.id;
 
-        if (webhookEvent.message) {
-          const text = (webhookEvent.message.text || "").toLowerCase();
+        // ===== IG message format =====
+        const message = event.message || event.value?.messages?.[0];
 
-          console.log("User:", senderId, text);
+        if (senderId && message?.text) {
+          const text = message.text.toLowerCase();
 
-          // ===== LƯU KHÁCH =====
-          USERS[senderId] = {
-            lastMessage: text,
-            time: new Date()
-          };
+          console.log("👉 User:", text);
 
-          // ===== CHECK BOT =====
-          if (ACTIVE_USERS[senderId] === false) {
-            return res.status(200).send("BOT OFF");
-          }
-
-          const reply = await handleMessage(senderId, text);
+          const reply = handleLogic(text);
 
           await sendMessage(senderId, reply);
         }
       }
     }
-
-    return res.status(200).send("EVENT_RECEIVED");
   }
 
-  return res.sendStatus(404);
+  res.sendStatus(200);
 });
 
-
-// ===== LOGIC =====
-async function handleMessage(senderId, text) {
-
-  if (text.includes("còn")) {
+// ===== LOGIC CHATBOT =====
+function handleLogic(text) {
+  // 1. hỏi còn áo không
+  if (
+    text.includes("còn") ||
+    text.includes("còn áo") ||
+    text.includes("còn không")
+  ) {
     return "Dạ áo này bên mình vẫn còn nha 😄\nBạn cao bao nhiêu, nặng bao nhiêu để mình tư vấn size chuẩn cho bạn luôn ạ?";
   }
 
-  if (text.match(/\d{2,3}kg/) || text.match(/1m\d{1,2}/)) {
-    return "Dạ mình đã nhận được thông tin của bạn rồi ạ 😄\nMình check size chuẩn cho bạn trong giây lát nha!";
+  // 2. khách gửi chiều cao cân nặng
+  if (text.match(/\d{2,3}.*\d{2,3}/)) {
+    return "Mình đã nhận được thông tin số đo của bạn, bạn chờ mình xíu để mình tư vấn kỹ hơn cho bạn nha ạ 🙆‍♂️";
   }
 
-  if (text.includes("giá")) {
-    return "Dạ bên mình đang tư vấn theo form nên mình hỗ trợ bạn kỹ hơn nha 😄\nBạn cho mình xin chiều cao cân nặng nhé!";
-  }
-
-  if (text.includes("mua") || text.includes("chốt")) {
-    ACTIVE_USERS[senderId] = false;
-
+  // 3. chốt đơn
+  if (
+    text.includes("chốt") ||
+    text.includes("lấy") ||
+    text.includes("mua")
+  ) {
     return `Dạ mình lên đơn cho bạn nha 😄  
+
 Bạn gửi giúp mình:
 
 - Tên người nhận  
 - SĐT  
 - Địa chỉ  
 
-Phí ship:
-- Nội thành: 20k  
-- Tỉnh: 30k
-
-Nhân viên sẽ hỗ trợ bạn tiếp nha 👨‍💼`;
+(Đối với đơn hàng tỉnh shop sẽ thu cọc ship là 30k, trong thành phố thì sẽ là 20k)
+Để shop giao hàng cho bạn nha 🚚`;
   }
 
-  return await getAIResponse(text);
+  // mặc định
+  return "Xin chào! Bạn cần tư vấn mẫu áo nào ạ? 😄";
 }
 
-
-// ===== AI =====
-async function getAIResponse(userText) {
+// ===== SEND MESSAGE =====
+async function sendMessage(recipientId, text) {
   try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${GROQ_API_KEY}`,
-        "Content-Type": "application/json"
+    await axios.post(
+      `https://graph.facebook.com/v19.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: { text },
       },
-      body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
-        messages: [
-          {
-            role: "system",
-            content: "Bạn là nhân viên bán quần áo, trả lời ngắn gọn, thân thiện, không báo giá."
-          },
-          {
-            role: "user",
-            content: userText
-          }
-        ]
-      })
-    });
-
-    const data = await res.json();
-
-    return data.choices?.[0]?.message?.content || "Bạn nói rõ hơn giúp mình nha 😄";
-
-  } catch (err) {
-    return "Shop đang bận, bạn đợi xíu nha 😄";
+      {
+        params: { access_token: PAGE_ACCESS_TOKEN },
+      }
+    );
+  } catch (error) {
+    console.error("❌ Send error:", error.response?.data || error.message);
   }
 }
 
-
-// ===== SEND =====
-async function sendMessage(senderId, text) {
-  await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      recipient: { id: senderId },
-      message: { text }
-    })
-  });
-}
-
-
-// ===== RUN =====
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running"));
+// ===== START SERVER =====
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
