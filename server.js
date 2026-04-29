@@ -1,20 +1,21 @@
-const express = require("express");
-const axios = require("axios");
+import express from "express";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const VERIFY_TOKEN = "123456"; // bạn tự đặt
 
 // webhook verify
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = "123456";
-
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token === VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("Webhook verified!");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
@@ -23,60 +24,35 @@ app.get("/webhook", (req, res) => {
 
 // nhận tin nhắn
 app.post("/webhook", async (req, res) => {
-  try {
-    const entry = req.body.entry;
-    const message = entry?.[0]?.messaging?.[0];
+  const body = req.body;
 
-    if (!message || !message.message) return res.sendStatus(200);
+  if (body.object === "page") {
+    for (const entry of body.entry) {
+      const webhookEvent = entry.messaging[0];
+      const senderId = webhookEvent.sender.id;
 
-    const senderId = message.sender.id;
-    const text = message.message.text;
+      if (webhookEvent.message) {
+        const text = webhookEvent.message.text;
 
-    // gọi AI
-    const aiRes = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Bạn là nhân viên bán áo secondhand. Nói chuyện tự nhiên, thân thiện, luôn hỏi size và cố gắng chốt đơn.",
-          },
-          {
-            role: "user",
-            content: text,
-          },
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
+        await sendMessage(senderId, "Bạn vừa nói: " + text);
       }
-    );
-
-    const reply = aiRes.data.choices[0].message.content;
-
-    // gửi lại IG
-    await axios.post(
-      `https://graph.facebook.com/v18.0/me/messages`,
-      {
-        recipient: { id: senderId },
-        message: { text: reply },
-      },
-      {
-        params: {
-          access_token: process.env.PAGE_ACCESS_TOKEN,
-        },
-      }
-    );
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error(err);
-    res.sendStatus(500);
+    }
+    res.status(200).send("EVENT_RECEIVED");
+  } else {
+    res.sendStatus(404);
   }
 });
 
-app.listen(3000, () => console.log("Server chạy rồi 🚀"));
+// gửi tin nhắn
+async function sendMessage(senderId, text) {
+  await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: senderId },
+      message: { text: text }
+    })
+  });
+}
+
+app.listen(3000, () => console.log("Server running"));
