@@ -8,8 +8,9 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const VERIFY_TOKEN = "123456";
 
-// ===== LƯU TRẠNG THÁI BOT =====
-const ACTIVE_USERS = {}; // true = bot trả lời, false = bot tắt
+// ===== DATA =====
+const ACTIVE_USERS = {};
+const USERS = {}; // lưu danh sách khách
 
 // ===== VERIFY =====
 app.get("/webhook", (req, res) => {
@@ -18,10 +19,32 @@ app.get("/webhook", (req, res) => {
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verified!");
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
+});
+
+// ===== API: XEM DANH SÁCH KHÁCH =====
+app.get("/users", (req, res) => {
+  res.json(USERS);
+});
+
+// ===== API: TẮT BOT =====
+app.get("/off/:id", (req, res) => {
+  const userId = req.params.id;
+
+  ACTIVE_USERS[userId] = false;
+
+  res.send("Đã tắt bot cho: " + userId);
+});
+
+// ===== API: BẬT BOT =====
+app.get("/on/:id", (req, res) => {
+  const userId = req.params.id;
+
+  ACTIVE_USERS[userId] = true;
+
+  res.send("Đã bật bot cho: " + userId);
 });
 
 // ===== WEBHOOK =====
@@ -35,27 +58,19 @@ app.post("/webhook", async (req, res) => {
         const senderId = webhookEvent.sender.id;
 
         if (webhookEvent.message) {
-          let text = (webhookEvent.message.text || "").toLowerCase();
+          const text = (webhookEvent.message.text || "").toLowerCase();
 
-          console.log("User:", text);
+          console.log("User:", senderId, text);
 
-          // ===== BẬT / TẮT BOT =====
+          // ===== LƯU KHÁCH =====
+          USERS[senderId] = {
+            lastMessage: text,
+            time: new Date()
+          };
 
-          if (text === "#off") {
-            ACTIVE_USERS[senderId] = false;
-            await sendMessage(senderId, "Dạ đã chuyển sang nhân viên hỗ trợ bạn nha 👨‍💼");
-            return;
-          }
-
-          if (text === "#on") {
-            ACTIVE_USERS[senderId] = true;
-            await sendMessage(senderId, "Bot đã hoạt động lại 🤖");
-            return;
-          }
-
-          // nếu bot đang tắt → không trả lời
+          // ===== CHECK BOT =====
           if (ACTIVE_USERS[senderId] === false) {
-            return;
+            return res.status(200).send("BOT OFF");
           }
 
           const reply = await handleMessage(senderId, text);
@@ -72,28 +87,23 @@ app.post("/webhook", async (req, res) => {
 });
 
 
-// ===== LOGIC CHÍNH =====
+// ===== LOGIC =====
 async function handleMessage(senderId, text) {
 
-  // 1. hỏi còn hàng
-  if (text.includes("còn") || text.includes("hết")) {
+  if (text.includes("còn")) {
     return "Dạ áo này bên mình vẫn còn nha 😄\nBạn cao bao nhiêu, nặng bao nhiêu để mình tư vấn size chuẩn cho bạn luôn ạ?";
   }
 
-  // 2. khách gửi chiều cao cân nặng
   if (text.match(/\d{2,3}kg/) || text.match(/1m\d{1,2}/)) {
     return "Dạ mình đã nhận được thông tin của bạn rồi ạ 😄\nMình check size chuẩn cho bạn trong giây lát nha!";
   }
 
-  // 3. hỏi giá (KHÔNG TRẢ GIÁ)
-  if (text.includes("giá") || text.includes("bao nhiêu")) {
-    return "Dạ bên mình đang tư vấn theo form và nhu cầu nên mình báo chi tiết cho bạn nha 😄\nBạn cao bao nhiêu, nặng bao nhiêu để mình tư vấn chuẩn cho bạn luôn ạ?";
+  if (text.includes("giá")) {
+    return "Dạ bên mình đang tư vấn theo form nên mình hỗ trợ bạn kỹ hơn nha 😄\nBạn cho mình xin chiều cao cân nặng nhé!";
   }
 
-  // 4. chốt đơn → TẮT BOT
-  if (text.includes("mua") || text.includes("chốt") || text.includes("lấy")) {
-
-    ACTIVE_USERS[senderId] = false; // 🔥 tắt bot luôn
+  if (text.includes("mua") || text.includes("chốt")) {
+    ACTIVE_USERS[senderId] = false;
 
     return `Dạ mình lên đơn cho bạn nha 😄  
 Bạn gửi giúp mình:
@@ -104,12 +114,11 @@ Bạn gửi giúp mình:
 
 Phí ship:
 - Nội thành: 20k  
-- Tỉnh: 30k (cọc trước)
+- Tỉnh: 30k
 
 Nhân viên sẽ hỗ trợ bạn tiếp nha 👨‍💼`;
   }
 
-  // ===== AI fallback =====
   return await getAIResponse(text);
 }
 
@@ -128,20 +137,7 @@ async function getAIResponse(userText) {
         messages: [
           {
             role: "system",
-            content: `
-Bạn là nhân viên bán quần áo.
-
-Quy tắc:
-- KHÔNG báo giá
-- Trả lời tự nhiên như người thật
-- Luôn dẫn khách về hỏi chiều cao cân nặng
-- Mục tiêu là giữ khách
-
-Phong cách:
-- Ngắn gọn
-- Thân thiện
-- Có emoji nhẹ 😄
-`
+            content: "Bạn là nhân viên bán quần áo, trả lời ngắn gọn, thân thiện, không báo giá."
           },
           {
             role: "user",
@@ -156,7 +152,6 @@ Phong cách:
     return data.choices?.[0]?.message?.content || "Bạn nói rõ hơn giúp mình nha 😄";
 
   } catch (err) {
-    console.error(err);
     return "Shop đang bận, bạn đợi xíu nha 😄";
   }
 }
@@ -177,4 +172,4 @@ async function sendMessage(senderId, text) {
 
 // ===== RUN =====
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on port " + PORT));
+app.listen(PORT, () => console.log("Server running"));
