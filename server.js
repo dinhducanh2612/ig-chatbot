@@ -6,7 +6,7 @@ app.use(bodyParser.json());
 
 // ===== ENV =====
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const VERIFY_TOKEN = "123456";
 
 // ===== VERIFY WEBHOOK =====
@@ -53,17 +53,17 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ===== AI RESPONSE =====
+// ===== AI (GROQ FREE) =====
 async function getAIResponse(userText) {
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${GROQ_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "llama3-8b-8192",
         messages: [
           {
             role: "system",
@@ -79,9 +79,10 @@ async function getAIResponse(userText) {
 
     const data = await res.json();
 
-    console.log("🤖 OpenAI raw:", JSON.stringify(data));
+    console.log("🤖 Groq raw:", JSON.stringify(data));
 
     return data.choices?.[0]?.message?.content || "Mình chưa hiểu 😢";
+
   } catch (err) {
     console.error("❌ Lỗi AI:", err);
     return "AI đang lỗi 😢";
@@ -98,7 +99,7 @@ async function sendMessage(senderId, text) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           recipient: { id: senderId },
-          message: { text: text }
+          message: { text }
         })
       }
     );
