@@ -1,4 +1,5 @@
 import express from "express";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
@@ -10,67 +11,74 @@ const VERIFY_TOKEN = "123456";
 
 // ===== DATA =====
 const ACTIVE_USERS = {};
-const USERS = {}; // lưu danh sách khách
+const USERS = {};
 
-// ===== VERIFY =====
+// ===== VERIFY WEBHOOK =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verified");
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
 });
 
-// ===== API: XEM DANH SÁCH KHÁCH =====
+// ===== API XEM KHÁCH =====
 app.get("/users", (req, res) => {
   res.json(USERS);
 });
 
-// ===== API: TẮT BOT =====
+// ===== TẮT BOT =====
 app.get("/off/:id", (req, res) => {
-  const userId = req.params.id;
-
-  ACTIVE_USERS[userId] = false;
-
-  res.send("Đã tắt bot cho: " + userId);
+  ACTIVE_USERS[req.params.id] = false;
+  res.send("Bot OFF: " + req.params.id);
 });
 
-// ===== API: BẬT BOT =====
+// ===== BẬT BOT =====
 app.get("/on/:id", (req, res) => {
-  const userId = req.params.id;
-
-  ACTIVE_USERS[userId] = true;
-
-  res.send("Đã bật bot cho: " + userId);
+  ACTIVE_USERS[req.params.id] = true;
+  res.send("Bot ON: " + req.params.id);
 });
 
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
+  console.log("🔥 EVENT:", JSON.stringify(body, null, 2));
+
   if (body.object === "page") {
     for (const entry of body.entry) {
-      for (const webhookEvent of entry.messaging) {
 
-        const senderId = webhookEvent.sender.id;
+      // hỗ trợ cả FB + IG
+      const events = entry.messaging || entry.changes || [];
 
-        if (webhookEvent.message) {
-          const text = (webhookEvent.message.text || "").toLowerCase();
+      for (const event of events) {
 
-          console.log("User:", senderId, text);
+        const senderId =
+          event.sender?.id ||
+          event.value?.sender?.id;
 
-          // ===== LƯU KHÁCH =====
+        const message =
+          event.message ||
+          event.value?.messages?.[0];
+
+        if (senderId && message?.text) {
+          const text = message.text.toLowerCase();
+
+          console.log("👉 User:", senderId, text);
+
+          // lưu khách
           USERS[senderId] = {
             lastMessage: text,
             time: new Date()
           };
 
-          // ===== CHECK BOT =====
+          // check bot bật/tắt
           if (ACTIVE_USERS[senderId] === false) {
-            return res.status(200).send("BOT OFF");
+            continue;
           }
 
           const reply = await handleMessage(senderId, text);
@@ -86,7 +94,6 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-
 // ===== LOGIC =====
 async function handleMessage(senderId, text) {
 
@@ -99,13 +106,14 @@ async function handleMessage(senderId, text) {
   }
 
   if (text.includes("giá")) {
-    return "Dạ bên mình đang tư vấn theo form nên mình hỗ trợ bạn kỹ hơn nha 😄\nBạn cho mình xin chiều cao cân nặng nhé!";
+    return "Dạ bên mình tư vấn theo form để hỗ trợ bạn kỹ hơn nha 😄\nBạn cho mình xin chiều cao cân nặng nhé!";
   }
 
   if (text.includes("mua") || text.includes("chốt")) {
     ACTIVE_USERS[senderId] = false;
 
     return `Dạ mình lên đơn cho bạn nha 😄  
+
 Bạn gửi giúp mình:
 
 - Tên người nhận  
@@ -114,16 +122,16 @@ Bạn gửi giúp mình:
 
 Phí ship:
 - Nội thành: 20k  
-- Tỉnh: 30k
+- Tỉnh: 30k  
 
 Nhân viên sẽ hỗ trợ bạn tiếp nha 👨‍💼`;
   }
 
+  // AI fallback
   return await getAIResponse(text);
 }
 
-
-// ===== AI =====
+// ===== AI GROQ =====
 async function getAIResponse(userText) {
   try {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -152,24 +160,29 @@ async function getAIResponse(userText) {
     return data.choices?.[0]?.message?.content || "Bạn nói rõ hơn giúp mình nha 😄";
 
   } catch (err) {
+    console.log("AI error:", err.message);
     return "Shop đang bận, bạn đợi xíu nha 😄";
   }
 }
 
-
-// ===== SEND =====
+// ===== SEND MESSAGE =====
 async function sendMessage(senderId, text) {
-  await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      recipient: { id: senderId },
-      message: { text }
-    })
-  });
+  try {
+    await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: senderId },
+        message: { text }
+      })
+    });
+  } catch (err) {
+    console.log("Send error:", err.message);
+  }
 }
 
-
-// ===== RUN =====
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running"));
+// ===== START SERVER =====
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
+});
